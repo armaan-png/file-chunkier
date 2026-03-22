@@ -103,21 +103,26 @@ jobs:
     - name: 8) Quick test
       shell: bash
       run: |
-        echo "Testing local SOCKS5 proxy..."
-        # Capture the trace output
-        IP_JSON=$(curl -s --max-time 15 --socks5-hostname 127.0.0.1:"${{ env.SOCKS_PORT }}" https://www.cloudflare.com/cdn-cgi/trace/)
+        echo "Testing local SOCKS5 proxy via 1.1.1.1..."
+        # Using 1.1.1.1/cdn-cgi/trace which is the standard diagnostic path
+        TRACE_DATA=$(curl -s --max-time 15 --socks5-hostname 127.0.0.1:"${{ env.SOCKS_PORT }}" https://1.1.1.1/cdn-cgi/trace)
         
-        # Check if the curl command itself succeeded
-        if [ $? -eq 0 ] && [ -n "$IP_JSON" ]; then
+        if [ $? -eq 0 ] && echo "$TRACE_DATA" | grep -q "ip="; then
           echo "✅ Proxy connection established!"
           echo "--- Trace Data ---"
-          echo "$IP_JSON"
-          # Extract IP safely without crashing the script if grep fails
-          EXT_IP=$(echo "$IP_JSON" | grep 'ip=' | cut -d= -f2 || echo "Unknown")
+          echo "$TRACE_DATA"
+          EXT_IP=$(echo "$TRACE_DATA" | grep 'ip=' | cut -d= -f2)
           echo "External IP via Proxy: $EXT_IP"
         else
-          echo "::error::Proxy test failed - could not reach Cloudflare via SOCKS"
-          exit 1
+          echo "⚠️ Cloudflare trace failed, trying backup (ifconfig.me)..."
+          BACKUP_IP=$(curl -s --max-time 10 --socks5-hostname 127.0.0.1:"${{ env.SOCKS_PORT }}" https://ifconfig.me)
+          if [ -z "$BACKUP_IP" ]; then
+             echo "::error::All proxy tests failed. Check Cloudflared logs."
+             cat "${{ env.TUNNEL_LOG }}"
+             exit 1
+          else
+             echo "✅ Proxy test OK via backup. IP: $BACKUP_IP"
+          fi
         fi
         
     - name: Keep alive
